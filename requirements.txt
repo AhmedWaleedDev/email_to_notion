@@ -1,6 +1,5 @@
-notion-client
-schedule
-python-dotenv
-logging
-sqlite3
-re
+imapclient==2.2.0                # IMAP support
+notion-client==1.0.2            # Notion API client
+python-dotenv==1.0.0            # For loading environment variables
+schedule==1.1.0                 # Task scheduling library
+python-dateutil==2.8.2          # For flexible date parsing
