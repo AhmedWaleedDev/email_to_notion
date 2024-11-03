@@ -1,0 +1,4 @@
+.env
+config/ignore_list.json
+config/keywords.json
+config/schedule.json

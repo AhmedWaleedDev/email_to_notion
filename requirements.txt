@@ -1,0 +1,4 @@
+notion-client
+schedule
+python-dotenv
+logging
