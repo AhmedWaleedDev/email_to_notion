@@ -2,3 +2,5 @@ notion-client
 schedule
 python-dotenv
 logging
+sqlite3
+re

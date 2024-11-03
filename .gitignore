@@ -1,4 +1,8 @@
 .env
+.venv
 config/ignore_list.json
 config/keywords.json
 config/schedule.json
+data/last_run.txt
+data/processed_emails.db
+logs/email_processor.log

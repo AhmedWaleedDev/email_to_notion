@@ -61,6 +61,9 @@ class EmailProcessor:
     def __init__(self, email_address: str, email_password: str, notion_token: str, database_id: str):
         self.email_address = email_address
         self.email_password = email_password
+        # self.credentials = Credentials(email_address, email_password)
+        # self.account = Account(email_address, credentials=self.credentials, autodiscover=True, access_type=DELEGATE)
+
         self.notion = Client(auth=notion_token)
         self.database_id = database_id
         
@@ -135,6 +138,7 @@ class EmailProcessor:
         with open(self.last_run_file, 'w') as f:
             f.write(datetime.now().isoformat())
 
+
     def is_email_processed(self, message_id: str) -> bool:
         """Check if email has already been processed"""
         cursor = self.conn.cursor()
@@ -178,6 +182,28 @@ class EmailProcessor:
                 detected_types.append(task_type)
                 
         return detected_types if detected_types else ['other']
+    
+    def parse_due_date(content: str) -> Optional[str]:
+        """Extract a due date from the email content if available."""
+        try:
+            # Define a regex pattern to find potential dates in the content
+            date_patterns = [
+                r"\b(?:due\s(?:on|by)?\s)?(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\b",   # Formats like "due on 12/31/2024"
+                r"\b(?:due\s(?:on|by)?\s)?((?:\d{1,2}\s)?(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s\d{2,4})\b",  # "due by 31 Dec 2024"
+            ]
+
+            # Try to match any of the date patterns
+            for pattern in date_patterns:
+                match = re.search(pattern, content, re.IGNORECASE)
+                if match:
+                    # Parse and standardize the found date
+                    due_date = date_parse(match.group(1), fuzzy=True)
+                    self.logger.error(f"Due_data found in email: {title}")
+                    return due_date.strftime("%Y-%m-%d")  # Format as "YYYY-MM-DD" for Notion
+
+        except Exception as e:
+            self.logger.error(f"No due_data found: {str(e)}")
+        return None  # Return None if no due date found
 
     def create_notion_page(self, title: str, content: str, task_types: List[str], due_date: Optional[str] = None):
         """Create a new page in Notion database"""
@@ -212,77 +238,80 @@ class EmailProcessor:
             self.logger.error(f"Error creating Notion page: {str(e)}")
             raise
 
-    def process_emails(self, since_time: Optional[datetime] = None):
-        """Process new emails and create Notion tasks"""
-        try:
-            self.logger.info("Starting email processing...")
-            
-            mail = imaplib.IMAP4_SSL("imap.gmail.com")
-            mail.login(self.email_address, self.email_password)
-            mail.select("inbox")
+def process_emails(self, since_time: Optional[datetime] = None):
+    """Process new emails and create Notion tasks with optional due dates"""
+    try:
+        self.logger.info("Starting email processing...")
+        
+        mail = imaplib.IMAP4_SSL("imap.gmail.com")
+        mail.login(self.email_address, self.email_password)
+        mail.select("inbox")
 
-            # Search criteria based on time
-            if since_time:
-                date_str = since_time.strftime("%d-%b-%Y")
-                search_criteria = f'(SINCE "{date_str}")'
-            else:
-                date_str = (datetime.now() - timedelta(days=1)).strftime("%d-%b-%Y")
-                search_criteria = f'(SINCE "{date_str}")'
+        # Search criteria based on time
+        if since_time:
+            date_str = since_time.strftime("%d-%b-%Y")
+            search_criteria = f'(SINCE "{date_str}")'
+        else:
+            date_str = (datetime.now() - timedelta(days=1)).strftime("%d-%b-%Y")
+            search_criteria = f'(SINCE "{date_str}")'
 
-            self.logger.info(f"Searching emails with criteria: {search_criteria}")
-            _, messages = mail.search(None, search_criteria)
+        self.logger.info(f"Searching emails with criteria: {search_criteria}")
+        _, messages = mail.search(None, search_criteria)
 
-            for message_num in messages[0].split():
-                try:
-                    _, msg_data = mail.fetch(message_num, "(RFC822)")
-                    email_body = msg_data[0][1]
-                    email_message = email.message_from_bytes(email_body)
-                    
-                    # Get message ID for tracking
-                    message_id = email_message["Message-ID"]
-                    
-                    if not message_id:
-                        self.logger.warning("Email without Message-ID found, generating unique ID")
-                        message_id = f"generated-{datetime.now().timestamp()}"
-                    
-                    # Skip if already processed
-                    if self.is_email_processed(message_id):
-                        continue
-
-                    # Process email content
-                    subject = decode_header(email_message["subject"])[0][0]
-                    if isinstance(subject, bytes):
-                        subject = subject.decode()
-                    from_addr = email_message.get("from")
-
-                    self.logger.info(f"Processing email: {subject}")
-
-                    # Skip if email should be ignored
-                    if self.should_ignore(from_addr, subject):
-                        self.logger.info(f"Ignoring email: {subject}")
-                        continue
-
-                    # Get email content
-                    content = self.extract_email_content(email_message)
-
-                    # Create Notion page
-                    task_types = self.detect_task_type(subject, content)
-                    self.create_notion_page(subject, content, task_types)
-                    
-                    # Mark as processed
-                    self.mark_email_processed(message_id, subject)
-                    self.logger.info(f"Successfully processed email: {subject}")
-
-                except Exception as e:
-                    self.logger.error(f"Error processing individual email: {str(e)}")
+        for message_num in messages[0].split():
+            try:
+                _, msg_data = mail.fetch(message_num, "(RFC822)")
+                email_body = msg_data[0][1]
+                email_message = email.message_from_bytes(email_body)
+                
+                # Get message ID for tracking
+                message_id = email_message["Message-ID"]
+                
+                if not message_id:
+                    self.logger.warning("Email without Message-ID found, generating unique ID")
+                    message_id = f"generated-{datetime.now().timestamp()}"
+                
+                # Skip if already processed
+                if self.is_email_processed(message_id):
                     continue
 
-            mail.logout()
-            self.logger.info("Completed email processing")
+                # Process email content
+                subject = decode_header(email_message["subject"])[0][0]
+                if isinstance(subject, bytes):
+                    subject = subject.decode()
+                from_addr = email_message.get("from")
 
-        except Exception as e:
-            self.logger.error(f"Error in process_emails: {str(e)}")
-            raise
+                self.logger.info(f"Processing email: {subject}")
+
+                # Skip if email should be ignored
+                if self.should_ignore(from_addr, subject):
+                    self.logger.info(f"Ignoring email: {subject}")
+                    continue
+
+                # Get email content
+                content = self.extract_email_content(email_message)
+
+                # Extract due date from content if available
+                due_date = parse_due_date(content)
+
+                # Create Notion page
+                task_types = self.detect_task_type(subject, content)
+                self.create_notion_page(subject, content, task_types, due_date)
+                
+                # Mark as processed
+                self.mark_email_processed(message_id, subject)
+                self.logger.info(f"Successfully processed email: {subject}")
+
+            except Exception as e:
+                self.logger.error(f"Error processing individual email: {str(e)}")
+                continue
+
+        mail.logout()
+        self.logger.info("Completed email processing")
+
+    except Exception as e:
+        self.logger.error(f"Error in process_emails: {str(e)}")
+        raise
 
     def extract_email_content(self, email_message) -> str:
         """Extract content from email message"""
